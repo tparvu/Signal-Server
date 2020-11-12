@@ -46,7 +46,12 @@ public class WhisperServerConfiguration extends Configuration {
   @NotNull
   @Valid
   @JsonProperty
-  private AttachmentsConfiguration attachments;
+  private AwsAttachmentsConfiguration awsAttachments;
+
+  @NotNull
+  @Valid
+  @JsonProperty
+  private GcpAttachmentsConfiguration gcpAttachments;
 
   @NotNull
   @Valid
@@ -57,6 +62,11 @@ public class WhisperServerConfiguration extends Configuration {
   @Valid
   @JsonProperty
   private RedisConfiguration cache;
+
+  @NotNull
+  @Valid
+  @JsonProperty
+  private RedisConfiguration pubsub;
 
   @NotNull
   @Valid
@@ -101,15 +111,7 @@ public class WhisperServerConfiguration extends Configuration {
   @Valid
   @NotNull
   @JsonProperty
-  private DatabaseConfiguration keysDatabase;
-
-  @Valid
-  @NotNull
-  @JsonProperty
   private DatabaseConfiguration accountsDatabase;
-
-  @JsonProperty
-  private DatabaseConfiguration read_database;
 
   @Valid
   @NotNull
@@ -166,6 +168,16 @@ public class WhisperServerConfiguration extends Configuration {
   @JsonProperty
   private SecureBackupServiceConfiguration backupService;
 
+  @Valid
+  @NotNull
+  @JsonProperty
+  private ZkConfig zkConfig;
+
+  @Valid
+  @NotNull
+  @JsonProperty
+  private RemoteConfigConfiguration remoteConfig;
+
   private Map<String, String> transparentDataIndex = new HashMap<>();
 
   public RecaptchaConfiguration getRecaptchaConfiguration() {
@@ -192,12 +204,20 @@ public class WhisperServerConfiguration extends Configuration {
     return httpClient;
   }
 
-  public AttachmentsConfiguration getAttachmentsConfiguration() {
-    return attachments;
+  public AwsAttachmentsConfiguration getAwsAttachmentsConfiguration() {
+    return awsAttachments;
+  }
+
+  public GcpAttachmentsConfiguration getGcpAttachmentsConfiguration() {
+    return gcpAttachments;
   }
 
   public RedisConfiguration getCacheConfiguration() {
     return cache;
+  }
+
+  public RedisConfiguration getPubsubCacheConfiguration() {
+    return pubsub;
   }
 
   public DirectoryConfiguration getDirectoryConfiguration() {
@@ -226,10 +246,6 @@ public class WhisperServerConfiguration extends Configuration {
 
   public DatabaseConfiguration getAbuseDatabaseConfiguration() {
     return abuseDatabase;
-  }
-
-  public DatabaseConfiguration getKeysDatabase() {
-    return keysDatabase;
   }
 
   public DatabaseConfiguration getAccountsDatabaseConfiguration() {
@@ -288,5 +304,13 @@ public class WhisperServerConfiguration extends Configuration {
 
   public SecureBackupServiceConfiguration getSecureBackupServiceConfiguration() {
     return backupService;
+  }
+
+  public ZkConfig getZkConfig() {
+    return zkConfig;
+  }
+
+  public RemoteConfigConfiguration getRemoteConfigConfiguration() {
+    return remoteConfig;
   }
 }

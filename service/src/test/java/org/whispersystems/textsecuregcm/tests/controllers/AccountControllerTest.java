@@ -1,14 +1,18 @@
 package org.whispersystems.textsecuregcm.tests.controllers;
 
 import com.google.common.collect.ImmutableSet;
+import io.dropwizard.auth.PolymorphicAuthValueFactoryProvider;
+import io.dropwizard.testing.junit.ResourceTestRule;
 import org.glassfish.jersey.test.grizzly.GrizzlyWebTestContainerFactory;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.ArgumentMatcher;
 import org.whispersystems.textsecuregcm.auth.AuthenticationCredentials;
 import org.whispersystems.textsecuregcm.auth.DisabledPermittedAccount;
 import org.whispersystems.textsecuregcm.auth.ExternalServiceCredentialGenerator;
+import org.whispersystems.textsecuregcm.auth.StoredRegistrationLock;
 import org.whispersystems.textsecuregcm.auth.StoredVerificationCode;
 import org.whispersystems.textsecuregcm.auth.TurnTokenGenerator;
 import org.whispersystems.textsecuregcm.controllers.AccountController;
@@ -50,13 +54,21 @@ import java.security.SecureRandom;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
-import io.dropwizard.auth.PolymorphicAuthValueFactoryProvider;
-import io.dropwizard.testing.junit.ResourceTestRule;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Matchers.anyString;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.eq;
+import static org.mockito.Mockito.isA;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.notNull;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.when;
 
 public class AccountControllerTest {
 
@@ -67,6 +79,9 @@ public class AccountControllerTest {
   private static final String SENDER_OVER_PREFIX = "+14156666666";
   private static final String SENDER_PREAUTH     = "+14157777777";
   private static final String SENDER_REG_LOCK    = "+14158888888";
+  private static final String SENDER_HAS_STORAGE = "+14159999999";
+
+  private static final UUID   SENDER_REG_LOCK_UUID = UUID.randomUUID();
 
   private static final String ABUSIVE_HOST             = "192.168.1.1";
   private static final String RESTRICTED_HOST          = "192.168.1.2";
@@ -95,6 +110,7 @@ public class AccountControllerTest {
   private        TurnTokenGenerator     turnTokenGenerator     = mock(TurnTokenGenerator.class);
   private        Account                senderPinAccount       = mock(Account.class);
   private        Account                senderRegLockAccount   = mock(Account.class);
+  private        Account                senderHasStorage       = mock(Account.class);
   private        RecaptchaClient        recaptchaClient        = mock(RecaptchaClient.class);
   private        GCMSender              gcmSender              = mock(GCMSender.class);
   private        APNSender              apnSender              = mock(APNSender.class);
@@ -143,13 +159,16 @@ public class AccountControllerTest {
 
     when(timeProvider.getCurrentTimeMillis()).thenReturn(System.currentTimeMillis());
 
-    when(senderPinAccount.getPin()).thenReturn(Optional.of("31337"));
     when(senderPinAccount.getLastSeen()).thenReturn(System.currentTimeMillis());
+    when(senderPinAccount.getRegistrationLock()).thenReturn(new StoredRegistrationLock(Optional.empty(), Optional.empty(), Optional.of("31337"), System.currentTimeMillis()));
 
-    when(senderRegLockAccount.getPin()).thenReturn(Optional.empty());
-    when(senderRegLockAccount.getRegistrationLock()).thenReturn(Optional.of(registrationLockCredentials.getHashedAuthenticationToken()));
-    when(senderRegLockAccount.getRegistrationLockSalt()).thenReturn(Optional.of(registrationLockCredentials.getSalt()));
+    when(senderHasStorage.getUuid()).thenReturn(UUID.randomUUID());
+    when(senderHasStorage.isStorageSupported()).thenReturn(true);
+    when(senderHasStorage.getRegistrationLock()).thenReturn(new StoredRegistrationLock(Optional.empty(), Optional.empty(), Optional.empty(), System.currentTimeMillis()));
+
+    when(senderRegLockAccount.getRegistrationLock()).thenReturn(new StoredRegistrationLock(Optional.of(registrationLockCredentials.getHashedAuthenticationToken()), Optional.of(registrationLockCredentials.getSalt()), Optional.empty(), System.currentTimeMillis()));
     when(senderRegLockAccount.getLastSeen()).thenReturn(System.currentTimeMillis());
+    when(senderRegLockAccount.getUuid()).thenReturn(SENDER_REG_LOCK_UUID);
 
     when(pendingAccountsManager.getCodeForNumber(SENDER)).thenReturn(Optional.of(new StoredVerificationCode("1234", System.currentTimeMillis(), null)));
     when(pendingAccountsManager.getCodeForNumber(SENDER_OLD)).thenReturn(Optional.of(new StoredVerificationCode("1234", System.currentTimeMillis() - TimeUnit.MINUTES.toMillis(31), null)));
@@ -157,6 +176,7 @@ public class AccountControllerTest {
     when(pendingAccountsManager.getCodeForNumber(SENDER_REG_LOCK)).thenReturn(Optional.of(new StoredVerificationCode("666666", System.currentTimeMillis(), null)));
     when(pendingAccountsManager.getCodeForNumber(SENDER_OVER_PIN)).thenReturn(Optional.of(new StoredVerificationCode("444444", System.currentTimeMillis(), null)));
     when(pendingAccountsManager.getCodeForNumber(SENDER_PREAUTH)).thenReturn(Optional.of(new StoredVerificationCode("555555", System.currentTimeMillis(), "validchallenge")));
+    when(pendingAccountsManager.getCodeForNumber(SENDER_HAS_STORAGE)).thenReturn(Optional.of(new StoredVerificationCode("666666", System.currentTimeMillis(), null)));
 
     when(accountsManager.get(eq(SENDER_PIN))).thenReturn(Optional.of(senderPinAccount));
     when(accountsManager.get(eq(SENDER_REG_LOCK))).thenReturn(Optional.of(senderRegLockAccount));
@@ -164,6 +184,7 @@ public class AccountControllerTest {
     when(accountsManager.get(eq(SENDER))).thenReturn(Optional.empty());
     when(accountsManager.get(eq(SENDER_OLD))).thenReturn(Optional.empty());
     when(accountsManager.get(eq(SENDER_PREAUTH))).thenReturn(Optional.empty());
+    when(accountsManager.get(eq(SENDER_HAS_STORAGE))).thenReturn(Optional.of(senderHasStorage));
 
     when(usernamesManager.put(eq(AuthHelper.VALID_UUID), eq("n00bkiller"))).thenReturn(true);
     when(usernamesManager.put(eq(AuthHelper.VALID_UUID), eq("takenusername"))).thenReturn(false);
@@ -481,9 +502,27 @@ public class AccountControllerTest {
                                MediaType.APPLICATION_JSON_TYPE), AccountCreationResult.class);
 
     assertThat(result.getUuid()).isNotNull();
+    assertThat(result.isStorageCapable()).isFalse();
 
     verify(accountsManager, times(1)).create(isA(Account.class));
     verify(directoryQueue, times(1)).deleteRegisteredUser(notNull(), eq(SENDER));
+  }
+
+  @Test
+  public void testVerifySupportsStorage() throws Exception {
+    AccountCreationResult result =
+        resources.getJerseyTest()
+                 .target(String.format("/v1/accounts/code/%s", "666666"))
+                 .request()
+                 .header("Authorization", AuthHelper.getAuthHeader(SENDER_HAS_STORAGE, "bar"))
+                 .put(Entity.entity(new AccountAttributes("keykeykeykey", false, 2222, null),
+                                    MediaType.APPLICATION_JSON_TYPE), AccountCreationResult.class);
+
+    assertThat(result.getUuid()).isNotNull();
+    assertThat(result.isStorageCapable()).isTrue();
+
+    verify(accountsManager, times(1)).create(isA(Account.class));
+    verify(directoryQueue, times(1)).deleteRegisteredUser(notNull(), eq(SENDER_HAS_STORAGE));
   }
 
   @Test
@@ -544,6 +583,59 @@ public class AccountControllerTest {
     assertThat(result.getUuid()).isNotNull();
 
     verify(pinLimiter).validate(eq(SENDER_REG_LOCK));
+  }
+
+  @Test
+  public void testVerifyRegistrationLockSetsRegistrationLockOnNewAccount() throws Exception {
+
+    AccountCreationResult result =
+        resources.getJerseyTest()
+                 .target(String.format("/v1/accounts/code/%s", "666666"))
+                 .request()
+                 .header("Authorization", AuthHelper.getAuthHeader(SENDER_REG_LOCK, "bar"))
+                 .put(Entity.entity(new AccountAttributes("keykeykeykey", false, 3333, null, null, Hex.toStringCondensed(registration_lock_key)),
+                                    MediaType.APPLICATION_JSON_TYPE), AccountCreationResult.class);
+
+    assertThat(result.getUuid()).isNotNull();
+
+    verify(pinLimiter).validate(eq(SENDER_REG_LOCK));
+
+    verify(accountsManager).create(argThat(new ArgumentMatcher<>() {
+      @Override
+      public boolean matches(final Account account) {
+        final StoredRegistrationLock regLock = account.getRegistrationLock();
+        return regLock.requiresClientRegistrationLock() && regLock.verify(Hex.toStringCondensed(registration_lock_key), null);
+      }
+
+      @Override
+      public String toString() {
+        return "Account that has registration lock set";
+      }
+    }));
+
+  }
+
+  @Test
+  public void testVerifyRegistrationLockOld() throws Exception {
+    StoredRegistrationLock lock = senderRegLockAccount.getRegistrationLock();
+
+    try {
+      when(senderRegLockAccount.getRegistrationLock()).thenReturn(lock.forTime(System.currentTimeMillis() - TimeUnit.DAYS.toMillis(7)));
+
+      AccountCreationResult result =
+          resources.getJerseyTest()
+                   .target(String.format("/v1/accounts/code/%s", "666666"))
+                   .request()
+                   .header("Authorization", AuthHelper.getAuthHeader(SENDER_REG_LOCK, "bar"))
+                   .put(Entity.entity(new AccountAttributes("keykeykeykey", false, 3333, null, null, null),
+                                      MediaType.APPLICATION_JSON_TYPE), AccountCreationResult.class);
+
+      assertThat(result.getUuid()).isNotNull();
+
+      verifyNoMoreInteractions(pinLimiter);
+    } finally {
+      when(senderRegLockAccount.getRegistrationLock()).thenReturn(lock);
+    }
   }
 
   @Test
@@ -608,9 +700,9 @@ public class AccountControllerTest {
 
     RegistrationLockFailure failure = response.readEntity(RegistrationLockFailure.class);
     assertThat(failure.getBackupCredentials()).isNotNull();
-    assertThat(failure.getBackupCredentials().getUsername()).isEqualTo(SENDER_REG_LOCK);
+    assertThat(failure.getBackupCredentials().getUsername()).isEqualTo(SENDER_REG_LOCK_UUID.toString());
     assertThat(failure.getBackupCredentials().getPassword()).isNotEmpty();
-    assertThat(failure.getBackupCredentials().getPassword().startsWith(SENDER_REG_LOCK)).isTrue();
+    assertThat(failure.getBackupCredentials().getPassword().startsWith(SENDER_REG_LOCK_UUID.toString())).isTrue();
     assertThat(failure.getTimeRemaining()).isGreaterThan(0);
 
     verifyNoMoreInteractions(pinLimiter);
@@ -635,7 +727,7 @@ public class AccountControllerTest {
   @Test
   public void testVerifyOldPin() throws Exception {
     try {
-      when(senderPinAccount.getLastSeen()).thenReturn(System.currentTimeMillis() - TimeUnit.DAYS.toMillis(7));
+      when(senderPinAccount.getRegistrationLock()).thenReturn(new StoredRegistrationLock(Optional.empty(), Optional.empty(), Optional.of("31337"), System.currentTimeMillis() - TimeUnit.DAYS.toMillis(7)));
 
       AccountCreationResult result =
           resources.getJerseyTest()
@@ -648,7 +740,7 @@ public class AccountControllerTest {
       assertThat(result.getUuid()).isNotNull();
 
     } finally {
-      when(senderPinAccount.getLastSeen()).thenReturn(System.currentTimeMillis());
+      when(senderPinAccount.getRegistrationLock()).thenReturn(new StoredRegistrationLock(Optional.empty(), Optional.empty(), Optional.of("31337"), System.currentTimeMillis()));
     }
   }
 
@@ -665,8 +757,7 @@ public class AccountControllerTest {
     assertThat(response.getStatus()).isEqualTo(204);
 
     verify(AuthHelper.VALID_ACCOUNT).setPin(eq("31337"));
-    verify(AuthHelper.VALID_ACCOUNT).setRegistrationLock(eq(null));
-    verify(AuthHelper.VALID_ACCOUNT).setRegistrationLockSalt(eq(null));
+    verify(AuthHelper.VALID_ACCOUNT).setRegistrationLock(eq(null), eq(null));
   }
 
   @Test
@@ -684,8 +775,7 @@ public class AccountControllerTest {
     ArgumentCaptor<String> pinSaltCapture = ArgumentCaptor.forClass(String.class);
 
     verify(AuthHelper.VALID_ACCOUNT, times(1)).setPin(eq(null));
-    verify(AuthHelper.VALID_ACCOUNT, times(1)).setRegistrationLock(pinCapture.capture());
-    verify(AuthHelper.VALID_ACCOUNT, times(1)).setRegistrationLockSalt(pinSaltCapture.capture());
+    verify(AuthHelper.VALID_ACCOUNT, times(1)).setRegistrationLock(pinCapture.capture(), pinSaltCapture.capture());
 
     assertThat(pinCapture.getValue()).isNotEmpty();
     assertThat(pinSaltCapture.getValue()).isNotEmpty();

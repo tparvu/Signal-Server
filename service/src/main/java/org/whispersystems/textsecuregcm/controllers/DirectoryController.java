@@ -38,6 +38,7 @@ import org.whispersystems.textsecuregcm.util.Constants;
 import javax.validation.Valid;
 import javax.ws.rs.Consumes;
 import javax.ws.rs.GET;
+import javax.ws.rs.HeaderParam;
 import javax.ws.rs.PUT;
 import javax.ws.rs.Path;
 import javax.ws.rs.PathParam;
@@ -47,11 +48,13 @@ import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.Response.Status;
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 import static com.codahale.metrics.MetricRegistry.name;
 import io.dropwizard.auth.Auth;
@@ -65,6 +68,8 @@ public class DirectoryController {
       "attestation-error",
       "unexpected-error",
   };
+
+  private static final String[] FRONTED_REGIONS = {"+20", "+971", "+968", "+974"};
 
   private final Logger         logger            = LoggerFactory.getLogger(DirectoryController.class);
   private final MetricRegistry metricRegistry    = SharedMetricRegistries.getOrCreate(Constants.METRICS_NAME);
@@ -163,9 +168,20 @@ public class DirectoryController {
   @Path("/tokens")
   @Produces(MediaType.APPLICATION_JSON)
   @Consumes(MediaType.APPLICATION_JSON)
-  public ClientContacts getContactIntersection(@Auth Account account, @Valid ClientContactTokens contacts)
+  public ClientContacts getContactIntersection(@Auth Account account,
+                                               @HeaderParam("X-Forwarded-For") String forwardedFor,
+                                               @Valid ClientContactTokens contacts)
       throws RateLimitExceededException
   {
+    String requester = Arrays.stream(forwardedFor.split(","))
+                             .map(String::trim)
+                             .reduce((a, b) -> b)
+                             .orElseThrow();
+
+    if (Stream.of(FRONTED_REGIONS).noneMatch(region -> account.getNumber().startsWith(region))) {
+      rateLimiters.getContactsIpLimiter().validate(requester);
+    }
+
     rateLimiters.getContactsLimiter().validate(account.getNumber(), contacts.getContacts().size());
     contactsHistogram.update(contacts.getContacts().size());
 

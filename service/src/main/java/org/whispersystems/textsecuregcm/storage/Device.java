@@ -270,14 +270,30 @@ public class Device {
     @JsonProperty
     private boolean uuid;
 
+    @JsonProperty
+    private boolean gv2;
+
+    @JsonProperty
+    private boolean storage;
+
     public DeviceCapabilities() {}
 
-    public DeviceCapabilities(boolean uuid) {
-      this.uuid = uuid;
+    public DeviceCapabilities(boolean uuid, boolean gv2, boolean storage) {
+      this.uuid    = uuid;
+      this.gv2     = gv2;
+      this.storage = storage;
     }
 
     public boolean isUuid() {
       return uuid;
+    }
+
+    public boolean isGv2() {
+      return gv2;
+    }
+
+    public boolean isStorage() {
+      return storage;
     }
   }
 
